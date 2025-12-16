@@ -13,8 +13,9 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
   const processingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   
   const [cvReady, setCvReady] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false); // New state to track actual playback
   const [detectedIds, setDetectedIds] = useState<number[]>([]);
-  const [debugMode, setDebugMode] = useState(true);
+  const [debugMode, setDebugMode] = useState(false); // Default to false for cleaner initial look
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [lastTriggeredId, setLastTriggeredId] = useState<number | null>(null);
@@ -28,17 +29,15 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
   const lastPlayedTime = useRef<Map<number, number>>(new Map());
   const streamRef = useRef<MediaStream | null>(null);
   
-  // Ref to track if we already tried initializing to prevent double-execution
   const initAttempted = useRef(false);
 
   const addLog = (msg: string) => {
-    setDebugLog(prev => [msg, ...prev].slice(0, 10));
+    setDebugLog(prev => [msg, ...prev].slice(0, 8));
     console.log(`[APP] ${msg}`);
   };
 
   // --- 1. ROBUST OPENCV INITIALIZATION ---
   useEffect(() => {
-    // If already ready, skip
     if (window.cv && window.cv.aruco && window.cv.getBuildInformation) {
       setCvReady(true);
       return;
@@ -50,58 +49,49 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
     const checkAndInit = async () => {
       attempts++;
       
-      // Step A: Check if script is loaded into window
       if (!window.cv) {
         if (attempts % 20 === 0) setLoadingMsg(`Downloading Engine (${Math.floor(attempts/2)}s)...`);
-        return; // Keep waiting
+        return;
       }
 
-      // Step B: Check state of window.cv
       try {
-        // State 1: It's a Promise/Factory function (typical for this build)
         if (typeof window.cv === 'function' && !window.cv.getBuildInformation && !initAttempted.current) {
           initAttempted.current = true;
           addLog("Starting WASM Compilation...");
           setLoadingMsg("Compiling WASM...");
           
           try {
-            // Run the factory
             const cvInstance = await window.cv();
-            // Replace the factory with the instance globally
             window.cv = cvInstance; 
-            addLog("WASM Compiled Successfully.");
+            addLog("WASM Compiled.");
           } catch (e: any) {
             addLog("WASM Error: " + e.message);
-            initAttempted.current = false; // Allow retry if it failed momentarily
+            initAttempted.current = false;
           }
         }
         
-        // State 2: It's a Ready Object
         if (window.cv.getBuildInformation) {
           if (window.cv.aruco) {
              addLog("ArUco Module Verified.");
              setCvReady(true);
              if(checkTimer) clearInterval(checkTimer);
           } else {
-             // This happens if wrong build is loaded
              addLog("WARNING: cv loaded but ArUco missing.");
-             setLoadingMsg("Error: ArUco module missing in this build.");
+             setLoadingMsg("Error: ArUco module missing.");
              if(checkTimer) clearInterval(checkTimer);
           }
         }
       } catch(e: any) {
-        addLog("Init Check Error: " + e.message);
+        addLog("Init Error: " + e.message);
       }
 
-      // Timeout after 60 seconds
       if (attempts > 120) {
-        setLoadingMsg("Connection Timeout.");
+        setLoadingMsg("Connection Timeout (Vision).");
         if(checkTimer) clearInterval(checkTimer);
       }
     };
 
     checkTimer = setInterval(checkAndInit, 500);
-
     return () => clearInterval(checkTimer);
   }, []);
 
@@ -112,8 +102,9 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
 
   // --- 2. CAMERA SETUP ---
   useEffect(() => {
-    // Don't start camera until user is in this view.
-    // We try to start it even if CV isn't ready, so user sees *something*
+    let mounted = true;
+    setIsVideoPlaying(false); // Reset on camera switch
+
     const startCamera = async () => {
       setCameraError(null);
       
@@ -122,39 +113,69 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        addLog("Requesting Camera...");
+        
+        // Use basic constraints first to ensure it works on all devices
+        const constraints: MediaStreamConstraints = {
           video: {
-            facingMode: { ideal: facingMode },
-            width: { ideal: 1280 }, // 720p is good balance
+            facingMode: facingMode,
+            // Don't force strict resolution to avoid "OverconstrainedError" on some mobiles
+            width: { ideal: 1280 }, 
             height: { ideal: 720 }
           },
           audio: false,
-        });
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
+        if (!mounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
         streamRef.current = stream;
+        addLog("Camera Acquired");
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          // Wait for metadata to ensure we can play
           videoRef.current.onloadedmetadata = () => {
-             videoRef.current?.play();
-             if(videoRef.current) {
-               setDebugStats(prev => ({ 
-                 ...prev, 
-                 resolution: `${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}` 
-               }));
-             }
+             if (!mounted) return;
+             addLog("Meta Loaded. Playing...");
+             videoRef.current?.play()
+              .then(() => {
+                addLog("Video Playing");
+                setIsVideoPlaying(true);
+                if(videoRef.current) {
+                  setDebugStats(prev => ({ 
+                    ...prev, 
+                    resolution: `${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}` 
+                  }));
+                }
+              })
+              .catch(e => {
+                console.error(e);
+                setCameraError("Autoplay blocked. Tap screen.");
+                addLog("Play Error: " + e.message);
+              });
           };
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Camera Error:", err);
-        setCameraError("Camera blocked or missing.");
-        addLog("Cam Error: " + err);
+        let msg = "Camera access denied.";
+        if (err.name === 'NotAllowedError') msg = "Permission denied. Enable camera in settings.";
+        if (err.name === 'NotFoundError') msg = "No camera found.";
+        if (err.name === 'NotReadableError') msg = "Camera in use by another app.";
+        
+        setCameraError(msg);
+        addLog("Cam Fail: " + err.name);
       }
     };
 
     startCamera();
 
     return () => {
+      mounted = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -190,7 +211,6 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
 
   // --- 4. DETECTION LOOP ---
   const processFrame = useCallback(() => {
-    // If not ready, just loop without processing
     if (!cvReady || !window.cv || !window.cv.aruco) {
       requestRef.current = requestAnimationFrame(processFrame);
       return;
@@ -203,14 +223,16 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     
-    if (video.readyState !== video.HAVE_ENOUGH_DATA || !ctx) {
+    // Safety check: is video actually ready?
+    if (video.readyState !== 4 || video.videoWidth === 0) {
       requestRef.current = requestAnimationFrame(processFrame);
       return;
     }
 
-    // Resize canvas to match video
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
     if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -220,7 +242,6 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
 
     const now = performance.now();
     
-    // Throttle detection to save battery/CPU
     if (now - lastScanTime.current > DETECTION_INTERVAL_MS) {
       const startTime = performance.now();
       lastScanTime.current = now;
@@ -229,11 +250,10 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
         const cv = window.cv;
         const aruco = cv.aruco;
 
-        // Create offscreen canvas for processing if needed
         if (!processingCanvasRef.current) processingCanvasRef.current = document.createElement('canvas');
         const pCanvas = processingCanvasRef.current;
         
-        // Downscale for processing speed (320px width is enough for ArUco usually)
+        // 320px is sweet spot for performance/accuracy on mobile web
         const procWidth = 320; 
         const scale = procWidth / video.videoWidth;
         const procHeight = video.videoHeight * scale;
@@ -248,16 +268,13 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
            pCtx.drawImage(video, 0, 0, procWidth, procHeight);
            
            let src = cv.imread(pCanvas);
-           
-           // ArUco Detection Pipeline
            let dictionary = new aruco.Dictionary(aruco.DICT_4X4_250);
            let params = new aruco.DetectorParameters();
            
-           // Tune for performance and robustness
            params.adaptiveThreshWinSizeMin = 3;
            params.adaptiveThreshWinSizeMax = 23;
            params.adaptiveThreshWinSizeStep = 10;
-           params.minMarkerPerimeterRate = 0.08; // Ignore very small distant markers
+           params.minMarkerPerimeterRate = 0.08;
 
            let markerCorners = new cv.MatVector();
            let markerIds = new cv.Mat();
@@ -271,11 +288,9 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
              for (let i = 0; i < markerIds.rows; i++) {
                const id = markerIds.data32S[i];
                
-               // Get corners for drawing
                const corners = markerCorners.get(i);
                const invScale = 1 / scale;
                
-               // Transform corners back to full video size
                const x0 = corners.data32F[0] * invScale;
                const y0 = corners.data32F[1] * invScale;
                const x1 = corners.data32F[2] * invScale;
@@ -289,8 +304,8 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
 
                if (debugMode || isValid) {
                    ctx.beginPath();
-                   ctx.lineWidth = isValid ? 5 : 2;
-                   ctx.strokeStyle = isValid ? '#22c55e' : '#f59e0b';
+                   ctx.lineWidth = isValid ? 4 : 2;
+                   ctx.strokeStyle = isValid ? '#22c55e' : 'rgba(255, 165, 0, 0.5)';
                    ctx.moveTo(x0, y0);
                    ctx.lineTo(x1, y1);
                    ctx.lineTo(x2, y2);
@@ -298,16 +313,12 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
                    ctx.closePath();
                    ctx.stroke();
                    
-                   // Draw ID text
                    const centerX = (x0 + x1 + x2 + x3) / 4;
                    const centerY = (y0 + y1 + y2 + y3) / 4;
                    
-                   ctx.font = "bold 20px monospace";
-                   ctx.fillStyle = isValid ? "#22c55e" : "#f59e0b";
-                   ctx.strokeStyle = "black";
-                   ctx.lineWidth = 3;
-                   ctx.strokeText(`ID:${id}`, centerX, centerY);
-                   ctx.fillText(`ID:${id}`, centerX, centerY);
+                   ctx.font = "bold 24px monospace";
+                   ctx.fillStyle = isValid ? "#22c55e" : "orange";
+                   if(isValid) ctx.fillText(`ID:${id}`, centerX, centerY);
                }
 
                if (isValid) {
@@ -326,7 +337,6 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
              fps: Math.round(1000 / (endTime - startTime || 1))
            }));
 
-           // Clean up OpenCV objects to prevent memory leaks
            src.delete();
            dictionary.delete();
            markerIds.delete();
@@ -335,17 +345,14 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
            params.delete();
         }
       } catch (e: any) {
-        if (!debugLog.includes("Scan Loop Error")) {
-             addLog("Scan Loop Error: " + e.message);
-        }
+        // Silent catch for intermittent frames
       }
     }
 
     requestRef.current = requestAnimationFrame(processFrame);
-  }, [cvReady, currentPackId, debugMode, debugLog]);
+  }, [cvReady, currentPackId, debugMode]);
 
   useEffect(() => {
-    // Start the loop
     requestRef.current = requestAnimationFrame(processFrame);
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
@@ -355,77 +362,104 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
   // --- RENDER ---
   return (
     <div className="relative w-full h-full bg-black overflow-hidden">
-      <video ref={videoRef} className="absolute w-full h-full object-cover" playsInline muted />
+      {/* Video Element with AutoPlay */}
+      <video 
+        ref={videoRef} 
+        className={`absolute w-full h-full object-cover transition-opacity duration-500 ${isVideoPlaying ? 'opacity-100' : 'opacity-0'}`} 
+        playsInline 
+        autoPlay 
+        muted 
+      />
       <canvas ref={canvasRef} className="absolute w-full h-full pointer-events-none object-cover" />
 
-      {/* Visual Trigger Feedback (Screen Flash) */}
+      {/* Visual Trigger Feedback */}
       <div className={`absolute inset-0 bg-green-500 pointer-events-none transition-opacity duration-100 ${lastTriggeredId ? 'opacity-30' : 'opacity-0'}`} />
 
-      {/* Header Controls */}
-      <div className="absolute top-0 left-0 right-0 z-40 p-4 pt-safe flex justify-between items-start pointer-events-none">
-        <button onClick={onBack} className="pointer-events-auto w-12 h-12 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full text-white">
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+      {/* ERROR OVERLAY (High Priority) */}
+      {cameraError && (
+        <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col items-center justify-center p-8 text-center">
+           <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mb-4 text-3xl">
+             !
+           </div>
+           <h2 className="text-xl font-bold text-white mb-2">Camera Issue</h2>
+           <p className="text-red-300 mb-6">{cameraError}</p>
+           <div className="flex flex-col gap-3 w-full max-w-xs">
+             <button onClick={() => window.location.reload()} className="bg-gray-800 text-white px-6 py-3 rounded-xl font-medium border border-gray-700">
+               Retry
+             </button>
+             <button onClick={onBack} className="text-gray-400 py-2">
+               Go Back
+             </button>
+           </div>
+        </div>
+      )}
+
+      {/* LOADING OVERLAY (Wait for Vision + Camera) */}
+      {(!cvReady || !isVideoPlaying) && !cameraError && (
+         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-40 text-white p-6 text-center">
+            <div className="animate-spin rounded-full h-10 w-10 border-4 border-t-blue-500 border-gray-800 mb-6"></div>
+            
+            <h2 className="text-xl font-bold mb-2">
+              {!cvReady ? "Initializing Vision" : "Starting Camera"}
+            </h2>
+            
+            <p className="font-mono text-sm text-gray-500 mb-8 max-w-xs">
+              {!cvReady ? loadingMsg : "Waiting for video stream..."}
+            </p>
+            
+            {/* Manual Bypass if stuck */}
+            {!cvReady && (
+              <button 
+                onClick={() => { setCvReady(true); addLog("Loading bypassed"); }}
+                className="text-xs text-gray-600 underline decoration-gray-700 underline-offset-4"
+              >
+                Skip Vision Check
+              </button>
+            )}
+         </div>
+      )}
+
+      {/* HUD Controls */}
+      <div className="absolute top-0 left-0 right-0 z-30 p-4 pt-safe flex justify-between items-start pointer-events-none">
+        <button onClick={onBack} className="pointer-events-auto w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full text-white hover:bg-black/60 transition-colors">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
         </button>
 
         <div className="flex gap-2 pointer-events-auto">
            {debugMode && (
-             <button onClick={handleSimulate} className="px-3 h-12 rounded-full font-bold bg-blue-600/80 text-white backdrop-blur-md text-xs shadow-lg animate-pulse">
-               SIMULATE #13
+             <button onClick={handleSimulate} className="px-3 h-10 rounded-full font-bold bg-blue-600/90 text-white backdrop-blur-md text-xs shadow-lg">
+               SIM #13
              </button>
            )}
-           <button onClick={() => setDebugMode(!debugMode)} className={`px-4 h-12 rounded-full font-bold backdrop-blur-md text-xs shadow-lg transition-colors ${debugMode ? 'bg-green-600 text-white' : 'bg-black/40 text-gray-400'}`}>
-             {debugMode ? 'DEBUG' : 'DEBUG'}
+           <button onClick={() => setDebugMode(!debugMode)} className={`px-4 h-10 rounded-full font-bold backdrop-blur-md text-xs shadow-lg transition-colors ${debugMode ? 'bg-green-600 text-white' : 'bg-black/40 text-gray-400'}`}>
+             DEBUG
            </button>
-           <button onClick={handleSwitchCamera} className="w-12 h-12 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full text-white shadow-lg">
-             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+           <button onClick={handleSwitchCamera} className="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full text-white shadow-lg">
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
            </button>
         </div>
       </div>
 
-      {/* Debug HUD */}
+      {/* Debug Logs Panel */}
       {debugMode && (
         <div className="absolute bottom-safe left-4 right-4 z-30 pointer-events-none flex flex-col gap-2">
-          <div className="bg-black/80 backdrop-blur text-green-400 p-4 rounded-xl font-mono text-xs shadow-lg border border-gray-800">
-             <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-700">
-               <span className="font-bold text-white">VISION ENGINE</span>
-               <span className={cvReady ? "text-green-500" : "text-yellow-500"}>{cvReady ? "READY" : "LOADING..."}</span>
+          <div className="bg-black/80 backdrop-blur text-green-400 p-3 rounded-xl font-mono text-[10px] shadow-lg border border-gray-800">
+             <div className="flex justify-between items-center mb-1 pb-1 border-b border-gray-700">
+               <span className="font-bold text-white">SYSTEM STATUS</span>
+               <span className={cvReady ? "text-green-500" : "text-yellow-500"}>{cvReady ? "OK" : "INIT"}</span>
              </div>
-             <div className="grid grid-cols-2 gap-y-1">
-               <span className="text-gray-500">RES:</span> <span>{debugStats.resolution}</span>
-               <span className="text-gray-500">PROC:</span> <span>{debugStats.processingTime}ms ({debugStats.fps} FPS)</span>
-               <span className="text-gray-500">LAST:</span> <span className="text-white font-bold">{lastTriggeredId || '-'}</span>
+             <div className="grid grid-cols-2 gap-x-2">
+               <span>RES: {debugStats.resolution}</span>
+               <span>FPS: {debugStats.fps}</span>
              </div>
           </div>
           
-          <div className="bg-black/80 backdrop-blur p-2 rounded-xl border border-gray-800 pointer-events-auto max-h-40 overflow-y-auto shadow-lg">
+          <div className="bg-black/80 backdrop-blur p-2 rounded-xl border border-gray-800 pointer-events-auto max-h-32 overflow-y-auto shadow-lg">
              {debugLog.map((log, i) => (
-               <div key={i} className="text-[10px] font-mono text-gray-300 border-b border-gray-800/50 pb-1 mb-1 last:border-0 last:mb-0 break-words">{log}</div>
+               <div key={i} className="text-[9px] font-mono text-gray-300 border-b border-gray-800/50 pb-1 mb-1 last:border-0 last:mb-0 break-words">{log}</div>
              ))}
           </div>
         </div>
-      )}
-
-      {/* Loading Overlay with Bypass */}
-      {!cvReady && (
-         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90 backdrop-blur-sm z-50 text-white p-6 text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-blue-500 border-gray-700 mb-6"></div>
-            <h2 className="text-xl font-bold mb-2">Initialize Vision</h2>
-            <p className="font-mono text-sm text-gray-400 mb-4">{loadingMsg}</p>
-            
-            <button 
-              onClick={() => { setCvReady(true); addLog("Loading bypassed by user"); }}
-              className="mt-4 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 px-4 rounded-lg transition-colors border border-gray-600"
-            >
-              Skip Loading (Debug UI)
-            </button>
-            
-            {cameraError && (
-              <div className="mt-8 p-4 bg-red-900/50 border border-red-500 rounded-xl">
-                <p className="text-red-200 text-sm font-bold">⚠️ Camera Error</p>
-                <p className="text-red-300 text-xs mt-1">If testing in AI Studio or CodeSandbox, camera access is likely blocked. Please deploy to Vercel.</p>
-              </div>
-            )}
-         </div>
       )}
     </div>
   );
