@@ -1,0 +1,7 @@
+{
+  "name": "memody web",
+  "description": "A PWA that detects ArUco markers and plays specific sounds from configurable sound packs.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
