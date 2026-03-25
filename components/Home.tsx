@@ -4,6 +4,8 @@ import { SoundPack } from '../types';
 interface HomeProps {
   packs: SoundPack[];
   onSelectPack: (packId: string) => void;
+  debugMode: boolean;
+  onToggleDebug: () => void;
 }
 
 const getIconForPack = (pack: SoundPack) => {
@@ -17,23 +19,33 @@ const getIconForPack = (pack: SoundPack) => {
   return '📦'; // Default box icon
 };
 
-export const Home: React.FC<HomeProps> = ({ packs, onSelectPack }) => {
+export const Home: React.FC<HomeProps> = ({ packs, onSelectPack, debugMode, onToggleDebug }) => {
   return (
     <div className="min-h-screen bg-zinc-50 text-gray-900 flex flex-col p-6 overflow-y-auto">
       
       {/* Header */}
-      <header className="mt-8 mb-8">
-        <h1 className="text-3xl font-bold mb-2 text-gray-900">Choose a Pack</h1>
-        <p className="text-gray-500">Select a sound pack to start detecting markers.</p>
+      <header className="mt-8 mb-8 flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold mb-2 text-gray-900">Choose a Pack</h1>
+          <p className="text-gray-500">Select a sound pack to start detecting markers.</p>
+        </div>
+        <button 
+          onClick={onToggleDebug}
+          className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${debugMode ? 'bg-red-100 text-red-700 border-red-300' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
+        >
+          {debugMode ? 'DEBUG ON' : 'DEBUG OFF'}
+        </button>
       </header>
 
       {/* Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto w-full pb-10">
         {packs.map((pack) => (
-          <button
+          <div
             key={pack.id}
             onClick={() => onSelectPack(pack.id)}
-            className="group relative bg-white rounded-3xl p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:border-blue-100 hover:-translate-y-1 transition-all duration-300 text-left flex items-center gap-6"
+            role="button"
+            tabIndex={0}
+            className="group relative bg-white rounded-3xl p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:border-blue-100 hover:-translate-y-1 transition-all duration-300 text-left flex items-center gap-6 cursor-pointer"
           >
             {/* Icon Container */}
             <div className="w-16 h-16 bg-blue-50 text-3xl flex items-center justify-center rounded-2xl group-hover:scale-110 transition-transform duration-300 shadow-inner">
@@ -56,7 +68,7 @@ export const Home: React.FC<HomeProps> = ({ packs, onSelectPack }) => {
                 <path fillRule="evenodd" d="M16.72 7.72a.75.75 0 011.06 0l3.75 3.75a.75.75 0 010 1.06l-3.75 3.75a.75.75 0 11-1.06-1.06l2.47-2.47H3a.75.75 0 010-1.5h16.19l-2.47-2.47a.75.75 0 010-1.06z" clipRule="evenodd" />
               </svg>
             </div>
-          </button>
+          </div>
         ))}
       </div>
       

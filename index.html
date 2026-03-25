@@ -31,6 +31,13 @@
       }
     </script>
 
+    <script>
+      var Module = {
+        onRuntimeInitialized: function() {
+          window.cvLoaded = true;
+        }
+      };
+    </script>
     <!-- OpenCV.js 4.9.0 (via jsDelivr - faster) -->
     <script async src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.3/dist/opencv.min.js"></script>
     
@@ -46,18 +53,10 @@
         background: transparent;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
-  }
-}
-</script>
 </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>

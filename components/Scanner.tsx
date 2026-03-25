@@ -5,9 +5,10 @@ import { VALID_MARKER_IDS, DETECTION_INTERVAL_MS, SOUND_COOLDOWN_MS } from '../c
 interface ScannerProps {
   currentPackId: string;
   onBack: () => void;
+  initialDebugMode?: boolean;
 }
 
-export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
+export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initialDebugMode = false }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const processingCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -15,7 +16,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
   const [cvReady, setCvReady] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false); // New state to track actual playback
   const [detectedIds, setDetectedIds] = useState<number[]>([]);
-  const [debugMode, setDebugMode] = useState(false); // Default to false for cleaner initial look
+  const [debugMode, setDebugMode] = useState(initialDebugMode); // Default to false for cleaner initial look
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [lastTriggeredId, setLastTriggeredId] = useState<number | null>(null);
@@ -55,7 +56,21 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
       }
 
       try {
-        if (typeof window.cv === 'function' && !window.cv.getBuildInformation && !initAttempted.current) {
+        if (window.cv instanceof Promise) {
+          if (!initAttempted.current) {
+            initAttempted.current = true;
+            addLog("Awaiting cv Promise...");
+            setLoadingMsg("Loading Vision Engine...");
+            try {
+              const cvInstance = await window.cv;
+              window.cv = cvInstance;
+              addLog("Promise resolved.");
+            } catch (e: any) {
+              addLog("Promise Error: " + e.message);
+              initAttempted.current = false;
+            }
+          }
+        } else if (typeof window.cv === 'function' && !window.cv.getBuildInformation && !initAttempted.current) {
           initAttempted.current = true;
           addLog("Starting WASM Compilation...");
           setLoadingMsg("Compiling WASM...");
@@ -70,7 +85,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
           }
         }
         
-        if (window.cv.getBuildInformation) {
+        if (window.cvLoaded && window.cv && window.cv.getBuildInformation) {
           if (window.cv.aruco) {
              addLog("ArUco Module Verified.");
              setCvReady(true);
@@ -78,6 +93,13 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
           } else {
              addLog("WARNING: cv loaded but ArUco missing.");
              setLoadingMsg("Error: ArUco module missing.");
+             if(checkTimer) clearInterval(checkTimer);
+          }
+        } else if (window.cv && window.cv.getBuildInformation) {
+          // Fallback if cvLoaded wasn't set but it's ready
+          if (window.cv.aruco) {
+             addLog("ArUco Module Verified.");
+             setCvReady(true);
              if(checkTimer) clearInterval(checkTimer);
           }
         }
@@ -115,6 +137,10 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
       try {
         addLog("Requesting Camera...");
         
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Camera API not supported. Ensure you are on HTTPS.");
+        }
+
         // Use basic constraints first to ensure it works on all devices
         const constraints: MediaStreamConstraints = {
           video: {
@@ -126,7 +152,14 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
           audio: false,
         };
 
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const streamPromise = navigator.mediaDevices.getUserMedia(constraints);
+        let timeoutId: any;
+        const timeoutPromise = new Promise<MediaStream>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("Camera request timed out")), 10000);
+        });
+
+        const stream = await Promise.race([streamPromise, timeoutPromise]);
+        clearTimeout(timeoutId);
         
         if (!mounted) {
           stream.getTracks().forEach(track => track.stop());
@@ -138,10 +171,10 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          // Wait for metadata to ensure we can play
-          videoRef.current.onloadedmetadata = () => {
+          
+          const attemptPlay = () => {
              if (!mounted) return;
-             addLog("Meta Loaded. Playing...");
+             addLog("Attempting Play...");
              videoRef.current?.play()
               .then(() => {
                 addLog("Video Playing");
@@ -158,6 +191,15 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
                 setCameraError("Autoplay blocked. Tap screen.");
                 addLog("Play Error: " + e.message);
               });
+          };
+
+          // Try playing immediately
+          attemptPlay();
+
+          // Also listen to loadedmetadata just in case
+          videoRef.current.onloadedmetadata = () => {
+             addLog("Meta Loaded.");
+             if (!isVideoPlaying) attemptPlay();
           };
         }
       } catch (err: any) {
@@ -396,7 +438,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack }) => {
 
       {/* LOADING OVERLAY (Wait for Vision + Camera) */}
       {(!cvReady || !isVideoPlaying) && !cameraError && (
-         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-40 text-white p-6 text-center">
+         <div className="absolute inset-0 flex flex-col items-center justify-center bg-blue-900 z-40 text-white p-6 text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-4 border-t-blue-500 border-gray-800 mb-6"></div>
             
             <h2 className="text-xl font-bold mb-2">

@@ -9,13 +9,27 @@ const App: React.FC = () => {
   const [view, setView] = useState<'home' | 'scanner'>('home');
   const [currentPack, setCurrentPack] = useState<string>('default');
   const [packs, setPacks] = useState<SoundPack[]>(FALLBACK_PACKS);
+  const [debugMode, setDebugMode] = useState<boolean>(true); // Default to true for debugging
 
   useEffect(() => {
     // Load pack configuration
     fetch('/packs.json')
-      .then(res => res.ok ? res.json() : FALLBACK_PACKS)
-      .then(setPacks)
-      .catch(() => console.log("Using fallback packs"));
+      .then(res => {
+        if (!res.ok) throw new Error('Network response was not ok');
+        return res.json();
+      })
+      .then(data => {
+        if (Array.isArray(data)) {
+          setPacks(data);
+        } else {
+          console.warn("packs.json is not an array, using fallback");
+          setPacks(FALLBACK_PACKS);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load packs.json:", err);
+        setPacks(FALLBACK_PACKS);
+      });
   }, []);
 
   const handlePackSelect = async (packId: string) => {
@@ -36,11 +50,14 @@ const App: React.FC = () => {
         <Home 
           packs={packs} 
           onSelectPack={handlePackSelect} 
+          debugMode={debugMode}
+          onToggleDebug={() => setDebugMode(!debugMode)}
         />
       ) : (
         <Scanner 
           currentPackId={currentPack}
           onBack={handleBack}
+          initialDebugMode={debugMode}
         />
       )}
     </div>
