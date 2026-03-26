@@ -31,6 +31,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
   
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
+  const [showTestPanel, setShowTestPanel] = useState(false);
   const [procWidth, setProcWidth] = useState(800); // 800px default for better detection
   const [scanInterval, setScanInterval] = useState(100); // 100ms default
   const [persistenceMs, setPersistenceMs] = useState(500); // 500ms tracking memory
@@ -121,12 +122,23 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
             facingMode: facingMode,
             // Don't force strict resolution to avoid "OverconstrainedError" on some mobiles
             width: { ideal: 1280 }, 
-            height: { ideal: 720 }
+            height: { ideal: 720 },
+            // @ts-ignore - advanced constraints for mobile focus
+            advanced: [{ focusMode: "continuous" }]
           },
           audio: false,
         };
 
-        const streamPromise = navigator.mediaDevices.getUserMedia(constraints);
+        const streamPromise = navigator.mediaDevices.getUserMedia(constraints).catch(e => {
+          if (e.name === 'OverconstrainedError' || e.name === 'TypeError') {
+            addLog("Advanced constraints failed, retrying...");
+            // @ts-ignore
+            delete constraints.video.advanced;
+            return navigator.mediaDevices.getUserMedia(constraints);
+          }
+          throw e;
+        });
+        
         let timeoutId: any;
         const timeoutPromise = new Promise<MediaStream>((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error("Camera request timed out")), 10000);
@@ -442,6 +454,9 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
         </button>
 
         <div className="flex gap-2 pointer-events-auto">
+           <button onClick={() => setShowTestPanel(!showTestPanel)} className={`px-3 h-10 rounded-full font-bold backdrop-blur-md text-xs shadow-lg transition-colors ${showTestPanel ? 'bg-purple-600 text-white' : 'bg-black/40 text-gray-400'}`}>
+             TEST SOUNDS
+           </button>
            <button onClick={generateMapping} className="w-10 h-10 flex items-center justify-center bg-blue-600/80 backdrop-blur-md rounded-full text-white shadow-lg transition-colors hover:bg-blue-600" title="Shuffle Sounds">
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
            </button>
@@ -523,6 +538,45 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
             >
               Done
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sound Test Panel */}
+      {showTestPanel && (
+        <div className="absolute bottom-4 left-4 right-4 z-40 pointer-events-auto flex flex-col gap-2">
+          <div className="bg-black/80 backdrop-blur-md p-4 rounded-2xl border border-gray-800 shadow-2xl">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-white font-bold text-sm">Test Sounds</h3>
+              <button onClick={() => setShowTestPanel(false)} className="text-gray-400 hover:text-white">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 justify-start max-h-48 overflow-y-auto pr-2">
+              {Object.keys(markerMap).length > 0 ? (
+                Object.entries(markerMap).map(([id, item]) => (
+                  <button 
+                    key={id}
+                    onClick={() => audioService.playItem(item)}
+                    className="w-12 h-12 bg-gray-800 hover:bg-blue-600 text-white rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-colors border border-gray-700 active:scale-95"
+                  >
+                    <span className="text-[10px] text-gray-400">ID</span>
+                    <span>{id}</span>
+                  </button>
+                ))
+              ) : (
+                VALID_MARKER_IDS.slice(0, 16).map(id => (
+                  <button 
+                    key={id}
+                    onClick={() => audioService.playSynth(id)}
+                    className="w-12 h-12 bg-gray-800 hover:bg-purple-600 text-white rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-colors border border-gray-700 active:scale-95"
+                  >
+                    <span className="text-[10px] text-gray-400">ID</span>
+                    <span>{id}</span>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}

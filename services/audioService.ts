@@ -27,11 +27,15 @@ class AudioService {
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
     if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume();
+      try {
+        await this.audioContext.resume();
+      } catch (e) {
+        console.warn("Could not resume AudioContext", e);
+      }
     }
     
     // iOS Unlock Hack: play a silent buffer
-    if (!this.isUnlocked) {
+    if (!this.isUnlocked && this.audioContext.state === 'running') {
       const buffer = this.audioContext.createBuffer(1, 1, 22050);
       const source = this.audioContext.createBufferSource();
       source.buffer = buffer;
@@ -65,15 +69,45 @@ class AudioService {
     await Promise.allSettled(promises);
   }
 
-  public playSynth(markerId: number) {
+  public async playSynth(markerId: number) {
     if (!this.audioContext) return;
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
     console.log(`[Audio] Playing synth tone for ID ${markerId}`);
     this.playTone(markerId);
   }
 
-  // Play a specific sound item
-  public playItem(item: SoundItem) {
+  private playTone(markerId: number) {
     if (!this.audioContext) return;
+    
+    const freq = this.idToFrequency.get(markerId) || 440;
+    
+    const oscillator = this.audioContext.createOscillator();
+    const gainNode = this.audioContext.createGain();
+    
+    oscillator.type = 'sine';
+    oscillator.frequency.value = freq;
+    
+    const now = this.audioContext.currentTime;
+    
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(0.5, now + 0.05);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(this.audioContext.destination);
+    
+    oscillator.start(now);
+    oscillator.stop(now + 0.5);
+  }
+
+  // Play a specific sound item
+  public async playItem(item: SoundItem) {
+    if (!this.audioContext) return;
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
 
     const buffer = this.buffers.get(item.id);
     if (buffer) {
@@ -82,10 +116,14 @@ class AudioService {
       source.connect(this.audioContext.destination);
       
       const start = item.startTime || 0;
-      const end = item.endTime || buffer.duration;
-      const duration = end - start;
       
-      source.start(0, start, duration);
+      if (item.endTime) {
+        source.start(0, start, item.endTime - start);
+      } else {
+        source.start(0, start);
+      }
+    } else {
+      console.warn(`[Audio] Buffer not found for item ${item.id}`);
     }
   }
 }
