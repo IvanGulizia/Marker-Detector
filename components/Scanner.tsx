@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import jsAruco from 'js-aruco2';
 import 'js-aruco2/src/dictionaries/aruco_4x4_1000.js';
 import { audioService } from '../services/audioService';
-import { VALID_MARKER_IDS, DETECTION_INTERVAL_MS, SOUND_COOLDOWN_MS } from '../constants';
+import { VALID_MARKER_IDS, SOUND_COOLDOWN_MS } from '../constants';
 
 const { AR } = jsAruco;
 
@@ -27,6 +27,12 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [loadingMsg, setLoadingMsg] = useState("Loading Vision Engine...");
   
+  // Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [procWidth, setProcWidth] = useState(480); // 480px default for better detection
+  const [scanInterval, setScanInterval] = useState(100); // 100ms default
+  const [persistenceMs, setPersistenceMs] = useState(500); // 500ms tracking memory
+  
   const [debugStats, setDebugStats] = useState({ fps: 0, processingTime: 0, resolution: '0x0' });
   
   const requestRef = useRef<number | null>(null);
@@ -34,6 +40,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
   const lastPlayedTime = useRef<Map<number, number>>(new Map());
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<any>(null);
+  const trackedMarkersRef = useRef<Map<number, { id: number, corners: any[], lastSeen: number }>>(new Map());
   
   const initAttempted = useRef(false);
 
@@ -217,7 +224,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
 
     const now = performance.now();
     
-    if (now - lastScanTime.current > DETECTION_INTERVAL_MS) {
+    if (now - lastScanTime.current > scanInterval) {
       const startTime = performance.now();
       lastScanTime.current = now;
 
@@ -225,8 +232,6 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
         if (!processingCanvasRef.current) processingCanvasRef.current = document.createElement('canvas');
         const pCanvas = processingCanvasRef.current;
         
-        // 320px is sweet spot for performance/accuracy on mobile web
-        const procWidth = 320; 
         const scale = procWidth / video.videoWidth;
         const procHeight = video.videoHeight * scale;
         
@@ -242,53 +247,69 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
            
            const markers = detectorRef.current.detect(imageData);
 
-           const foundIds: number[] = [];
-
+           // Update tracked markers with new detections
            if (markers.length > 0) {
              for (let i = 0; i < markers.length; i++) {
                const marker = markers[i];
                const id = marker.id;
-               
-               const invScale = 1 / scale;
-               
-               const x0 = marker.corners[0].x * invScale;
-               const y0 = marker.corners[0].y * invScale;
-               const x1 = marker.corners[1].x * invScale;
-               const y1 = marker.corners[1].y * invScale;
-               const x2 = marker.corners[2].x * invScale;
-               const y2 = marker.corners[2].y * invScale;
-               const x3 = marker.corners[3].x * invScale;
-               const y3 = marker.corners[3].y * invScale;
-
                const isValid = VALID_MARKER_IDS.includes(id);
-
+               
                if (debugMode || isValid) {
+                 const invScale = 1 / scale;
+                 const scaledCorners = marker.corners.map((c: any) => ({ x: c.x * invScale, y: c.y * invScale }));
+                 
+                 trackedMarkersRef.current.set(id, {
+                   id,
+                   corners: scaledCorners,
+                   lastSeen: now
+                 });
+               }
+             }
+           }
+
+           const activeIds: number[] = [];
+
+           // Draw and trigger tracked markers
+           trackedMarkersRef.current.forEach((data, id) => {
+             if (now - data.lastSeen > persistenceMs) {
+               trackedMarkersRef.current.delete(id);
+             } else {
+               const isValid = VALID_MARKER_IDS.includes(id);
+               
+               if (debugMode || isValid) {
+                   const [c0, c1, c2, c3] = data.corners;
+                   
                    ctx.beginPath();
                    ctx.lineWidth = isValid ? 4 : 2;
-                   ctx.strokeStyle = isValid ? '#22c55e' : 'rgba(255, 165, 0, 0.5)';
-                   ctx.moveTo(x0, y0);
-                   ctx.lineTo(x1, y1);
-                   ctx.lineTo(x2, y2);
-                   ctx.lineTo(x3, y3);
+                   
+                   // Fade out slightly if it's an old detection (ghosting effect)
+                   const age = now - data.lastSeen;
+                   const opacity = Math.max(0.3, 1 - (age / persistenceMs));
+                   
+                   ctx.strokeStyle = isValid ? `rgba(34, 197, 94, ${opacity})` : `rgba(255, 165, 0, ${opacity * 0.5})`;
+                   ctx.moveTo(c0.x, c0.y);
+                   ctx.lineTo(c1.x, c1.y);
+                   ctx.lineTo(c2.x, c2.y);
+                   ctx.lineTo(c3.x, c3.y);
                    ctx.closePath();
                    ctx.stroke();
                    
-                   const centerX = (x0 + x1 + x2 + x3) / 4;
-                   const centerY = (y0 + y1 + y2 + y3) / 4;
+                   const centerX = (c0.x + c1.x + c2.x + c3.x) / 4;
+                   const centerY = (c0.y + c1.y + c2.y + c3.y) / 4;
                    
                    ctx.font = "bold 24px monospace";
-                   ctx.fillStyle = isValid ? "#22c55e" : "orange";
+                   ctx.fillStyle = isValid ? `rgba(34, 197, 94, ${opacity})` : `rgba(255, 165, 0, ${opacity})`;
                    if(isValid) ctx.fillText(`ID:${id}`, centerX, centerY);
                }
 
                if (isValid) {
-                 foundIds.push(id);
+                 activeIds.push(id);
                  triggerMarker(id);
                }
              }
-           }
+           });
            
-           setDetectedIds(foundIds);
+           setDetectedIds(activeIds);
 
            const endTime = performance.now();
            setDebugStats(prev => ({
@@ -304,7 +325,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
     }
 
     requestRef.current = requestAnimationFrame(processFrame);
-  }, [cvReady, currentPackId, debugMode]);
+  }, [cvReady, currentPackId, debugMode, procWidth, scanInterval, persistenceMs]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(processFrame);
@@ -385,6 +406,9 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
                SIM #13
              </button>
            )}
+           <button onClick={() => setShowSettings(true)} className="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full text-white shadow-lg transition-colors hover:bg-black/60">
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+           </button>
            <button onClick={() => setDebugMode(!debugMode)} className={`px-4 h-10 rounded-full font-bold backdrop-blur-md text-xs shadow-lg transition-colors ${debugMode ? 'bg-green-600 text-white' : 'bg-black/40 text-gray-400'}`}>
              DEBUG
            </button>
@@ -393,6 +417,71 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
            </button>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">Detection Settings</h2>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <label className="text-gray-300 font-medium">Resolution (Quality)</label>
+                  <span className="text-blue-400 font-mono">{procWidth}px</span>
+                </div>
+                <input 
+                  type="range" min="160" max="800" step="80" 
+                  value={procWidth} 
+                  onChange={(e) => setProcWidth(Number(e.target.value))}
+                  className="w-full accent-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Higher = better detection, lower = better battery</p>
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <label className="text-gray-300 font-medium">Tracking Memory</label>
+                  <span className="text-green-400 font-mono">{persistenceMs}ms</span>
+                </div>
+                <input 
+                  type="range" min="0" max="2000" step="100" 
+                  value={persistenceMs} 
+                  onChange={(e) => setPersistenceMs(Number(e.target.value))}
+                  className="w-full accent-green-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">How long to remember a marker after it's lost</p>
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <label className="text-gray-300 font-medium">Scan Interval</label>
+                  <span className="text-purple-400 font-mono">{scanInterval}ms</span>
+                </div>
+                <input 
+                  type="range" min="30" max="500" step="10" 
+                  value={scanInterval} 
+                  onChange={(e) => setScanInterval(Number(e.target.value))}
+                  className="w-full accent-purple-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Lower = faster reaction, higher = better battery</p>
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => setShowSettings(false)}
+              className="w-full mt-8 bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Debug Logs Panel */}
       {debugMode && (
