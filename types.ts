@@ -14,11 +14,9 @@ export interface AppConfig {
   debugMode: boolean;
 }
 
-// Extend window interface for OpenCV
+// Extend window interface
 declare global {
   interface Window {
-    cv: any;
-    cvLoaded: boolean;
-    Module: any;
+    // Add any global variables here if needed
   }
 }

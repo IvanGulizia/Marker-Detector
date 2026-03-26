@@ -1,6 +1,10 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import jsAruco from 'js-aruco2';
+import 'js-aruco2/src/dictionaries/aruco_4x4_1000.js';
 import { audioService } from '../services/audioService';
 import { VALID_MARKER_IDS, DETECTION_INTERVAL_MS, SOUND_COOLDOWN_MS } from '../constants';
+
+const { AR } = jsAruco;
 
 interface ScannerProps {
   currentPackId: string;
@@ -29,6 +33,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
   const lastScanTime = useRef<number>(0);
   const lastPlayedTime = useRef<Map<number, number>>(new Map());
   const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<any>(null);
   
   const initAttempted = useRef(false);
 
@@ -37,71 +42,12 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
     console.log(`[APP] ${msg}`);
   };
 
-  // --- 1. ROBUST OPENCV INITIALIZATION ---
+  // --- 1. VISION INITIALIZATION ---
   useEffect(() => {
-    // If already loaded and ready
-    if (window.cv && window.cv.aruco) {
-      setCvReady(true);
-      return;
-    }
-
-    // Prepare the Module object for OpenCV WASM initialization callback
-    window.Module = {
-      onRuntimeInitialized: () => {
-        addLog("WASM Runtime Initialized");
-        if (window.cv && window.cv.aruco) {
-          addLog("ArUco Module Verified");
-          setCvReady(true);
-        } else {
-          setLoadingMsg("Error: ArUco missing in OpenCV build");
-        }
-      }
-    };
-
-    const scriptId = 'opencv-script';
-    if (!document.getElementById(scriptId)) {
-      addLog("Injecting OpenCV script...");
-      setLoadingMsg("Downloading Vision Engine (~8MB)...");
-      
-      const script = document.createElement('script');
-      script.id = scriptId;
-      // Using official OpenCV 4.8.0 which includes ArUco
-      script.src = 'https://docs.opencv.org/4.8.0/opencv.js';
-      script.async = true;
-      
-      script.onload = () => {
-        addLog("Script downloaded.");
-        // Sometimes onRuntimeInitialized fires before onload, sometimes after
-        if (window.cv && window.cv.aruco) {
-          setCvReady(true);
-        }
-      };
-      
-      script.onerror = () => {
-        addLog("Failed to load OpenCV script.");
-        setLoadingMsg("Network Error: Failed to load OpenCV.");
-      };
-      
-      document.body.appendChild(script);
-    }
-
-    // Fallback polling just in case callbacks are missed
-    const fallbackTimer = setInterval(() => {
-      if (window.cv && window.cv.aruco) {
-        setCvReady(true);
-        clearInterval(fallbackTimer);
-      } else if (window.cv instanceof Promise) {
-        window.cv.then((target: any) => {
-          window.cv = target;
-          if (window.cv.aruco) {
-            setCvReady(true);
-            clearInterval(fallbackTimer);
-          }
-        }).catch(() => {});
-      }
-    }, 1000);
-
-    return () => clearInterval(fallbackTimer);
+    // js-aruco2 is pure JS, no WASM compilation needed!
+    detectorRef.current = new AR.Detector({ dictionaryName: 'ARUCO_4X4_1000' });
+    addLog("Vision Engine Initialized (js-aruco2)");
+    setCvReady(true);
   }, []);
 
   // Preload sounds
@@ -240,7 +186,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
 
   // --- 4. DETECTION LOOP ---
   const processFrame = useCallback(() => {
-    if (!cvReady || !window.cv || !window.cv.aruco) {
+    if (!cvReady) {
       requestRef.current = requestAnimationFrame(processFrame);
       return;
     }
@@ -276,9 +222,6 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
       lastScanTime.current = now;
 
       try {
-        const cv = window.cv;
-        const aruco = cv.aruco;
-
         if (!processingCanvasRef.current) processingCanvasRef.current = document.createElement('canvas');
         const pCanvas = processingCanvasRef.current;
         
@@ -293,41 +236,29 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
         }
 
         const pCtx = pCanvas.getContext('2d', { willReadFrequently: true });
-        if (pCtx) {
+        if (pCtx && detectorRef.current) {
            pCtx.drawImage(video, 0, 0, procWidth, procHeight);
+           const imageData = pCtx.getImageData(0, 0, procWidth, procHeight);
            
-           let src = cv.imread(pCanvas);
-           let dictionary = new aruco.Dictionary(aruco.DICT_4X4_250);
-           let params = new aruco.DetectorParameters();
-           
-           params.adaptiveThreshWinSizeMin = 3;
-           params.adaptiveThreshWinSizeMax = 23;
-           params.adaptiveThreshWinSizeStep = 10;
-           params.minMarkerPerimeterRate = 0.08;
-
-           let markerCorners = new cv.MatVector();
-           let markerIds = new cv.Mat();
-           let rejected = new cv.MatVector();
-
-           aruco.detectMarkers(src, dictionary, markerCorners, markerIds, params, rejected);
+           const markers = detectorRef.current.detect(imageData);
 
            const foundIds: number[] = [];
 
-           if (markerIds.rows > 0) {
-             for (let i = 0; i < markerIds.rows; i++) {
-               const id = markerIds.data32S[i];
+           if (markers.length > 0) {
+             for (let i = 0; i < markers.length; i++) {
+               const marker = markers[i];
+               const id = marker.id;
                
-               const corners = markerCorners.get(i);
                const invScale = 1 / scale;
                
-               const x0 = corners.data32F[0] * invScale;
-               const y0 = corners.data32F[1] * invScale;
-               const x1 = corners.data32F[2] * invScale;
-               const y1 = corners.data32F[3] * invScale;
-               const x2 = corners.data32F[4] * invScale;
-               const y2 = corners.data32F[5] * invScale;
-               const x3 = corners.data32F[6] * invScale;
-               const y3 = corners.data32F[7] * invScale;
+               const x0 = marker.corners[0].x * invScale;
+               const y0 = marker.corners[0].y * invScale;
+               const x1 = marker.corners[1].x * invScale;
+               const y1 = marker.corners[1].y * invScale;
+               const x2 = marker.corners[2].x * invScale;
+               const y2 = marker.corners[2].y * invScale;
+               const x3 = marker.corners[3].x * invScale;
+               const y3 = marker.corners[3].y * invScale;
 
                const isValid = VALID_MARKER_IDS.includes(id);
 
@@ -365,16 +296,10 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
              processingTime: Math.round(endTime - startTime),
              fps: Math.round(1000 / (endTime - startTime || 1))
            }));
-
-           src.delete();
-           dictionary.delete();
-           markerIds.delete();
-           markerCorners.delete();
-           rejected.delete();
-           params.delete();
         }
       } catch (e: any) {
         // Silent catch for intermittent frames
+        console.error(e);
       }
     }
 
