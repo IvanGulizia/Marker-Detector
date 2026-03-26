@@ -1,4 +1,5 @@
-import { VALID_MARKER_IDS } from '../constants';
+import { VALID_MARKER_IDS, MEMORY_PAIRS } from '../constants';
+import { packManager } from './packManager';
 
 class AudioService {
   private audioContext: AudioContext | null = null;
@@ -39,7 +40,33 @@ class AudioService {
     if (this.buffers.has(cacheKey)) return;
 
     try {
-      const response = await fetch(this.getSoundUrl(packId, markerId));
+      const pack = packManager.getPackById(packId);
+      if (!pack) throw new Error("Pack not found");
+
+      let soundSource: string | undefined;
+
+      // Handle memory mode mapping
+      if (pack.type === 'memory') {
+        const pairIndex = MEMORY_PAIRS.findIndex(pair => pair.includes(markerId));
+        if (pairIndex !== -1) {
+          // In memory mode, the sound key is the index of the pair (0-7)
+          soundSource = pack.sounds[pairIndex];
+        }
+      } else {
+        // Full mode: sound key is the marker ID
+        soundSource = pack.sounds[markerId];
+      }
+
+      if (!soundSource) {
+        // If it's a default pack without custom sounds, try fetching from public folder
+        if (!pack.isCustom) {
+          soundSource = this.getSoundUrl(packId, markerId);
+        } else {
+          throw new Error("No custom sound provided for this marker");
+        }
+      }
+
+      const response = await fetch(soundSource);
       if (!response.ok) throw new Error(`File missing`);
       const arrayBuffer = await response.arrayBuffer();
       if (this.audioContext) {

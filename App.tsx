@@ -1,35 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { Home } from './components/Home';
 import { Scanner } from './components/Scanner';
+import { PackCreator } from './components/PackCreator';
 import { audioService } from './services/audioService';
-import { FALLBACK_PACKS } from './constants';
+import { packManager } from './services/packManager';
 import { SoundPack } from './types';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'home' | 'scanner'>('home');
+  const [view, setView] = useState<'home' | 'scanner' | 'creator'>('home');
   const [currentPack, setCurrentPack] = useState<string>('default');
-  const [packs, setPacks] = useState<SoundPack[]>(FALLBACK_PACKS);
+  const [packs, setPacks] = useState<SoundPack[]>([]);
   const [debugMode, setDebugMode] = useState<boolean>(true); // Default to true for debugging
 
+  const loadPacks = async () => {
+    await packManager.init();
+    setPacks(packManager.getAllPacks());
+  };
+
   useEffect(() => {
-    // Load pack configuration
-    fetch('/packs.json')
-      .then(res => {
-        if (!res.ok) throw new Error('Network response was not ok');
-        return res.json();
-      })
-      .then(data => {
-        if (Array.isArray(data)) {
-          setPacks(data);
-        } else {
-          console.warn("packs.json is not an array, using fallback");
-          setPacks(FALLBACK_PACKS);
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to load packs.json:", err);
-        setPacks(FALLBACK_PACKS);
-      });
+    loadPacks();
   }, []);
 
   const handlePackSelect = async (packId: string) => {
@@ -46,18 +35,33 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-full bg-gray-900 overflow-hidden relative">
-      {view === 'home' ? (
+      {view === 'home' && (
         <Home 
           packs={packs} 
           onSelectPack={handlePackSelect} 
           debugMode={debugMode}
           onToggleDebug={() => setDebugMode(!debugMode)}
+          onCreatePack={() => setView('creator')}
+          onDeletePack={async (id) => {
+            await packManager.deleteCustomPack(id);
+            loadPacks();
+          }}
         />
-      ) : (
+      )}
+      {view === 'scanner' && (
         <Scanner 
           currentPackId={currentPack}
           onBack={handleBack}
           initialDebugMode={debugMode}
+        />
+      )}
+      {view === 'creator' && (
+        <PackCreator 
+          onClose={() => setView('home')}
+          onSave={() => {
+            loadPacks();
+            setView('home');
+          }}
         />
       )}
     </div>

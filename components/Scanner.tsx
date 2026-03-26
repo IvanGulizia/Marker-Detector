@@ -29,7 +29,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
   
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
-  const [procWidth, setProcWidth] = useState(480); // 480px default for better detection
+  const [procWidth, setProcWidth] = useState(800); // 800px default for better detection
   const [scanInterval, setScanInterval] = useState(100); // 100ms default
   const [persistenceMs, setPersistenceMs] = useState(500); // 500ms tracking memory
   

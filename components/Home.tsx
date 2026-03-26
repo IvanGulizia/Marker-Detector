@@ -1,11 +1,14 @@
 import React from 'react';
 import { SoundPack } from '../types';
+import { Plus, Trash2, Music, Brain } from 'lucide-react';
 
 interface HomeProps {
   packs: SoundPack[];
   onSelectPack: (packId: string) => void;
   debugMode: boolean;
   onToggleDebug: () => void;
+  onCreatePack: () => void;
+  onDeletePack: (packId: string) => void;
 }
 
 const getIconForPack = (pack: SoundPack) => {
@@ -19,7 +22,7 @@ const getIconForPack = (pack: SoundPack) => {
   return '📦'; // Default box icon
 };
 
-export const Home: React.FC<HomeProps> = ({ packs, onSelectPack, debugMode, onToggleDebug }) => {
+export const Home: React.FC<HomeProps> = ({ packs, onSelectPack, debugMode, onToggleDebug, onCreatePack, onDeletePack }) => {
   return (
     <div className="min-h-screen bg-zinc-50 text-gray-900 flex flex-col p-6 overflow-y-auto">
       
@@ -39,34 +42,54 @@ export const Home: React.FC<HomeProps> = ({ packs, onSelectPack, debugMode, onTo
 
       {/* Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto w-full pb-10">
+        {/* Create New Pack Button */}
+        <div
+          onClick={onCreatePack}
+          role="button"
+          tabIndex={0}
+          className="group relative bg-blue-50/50 border-2 border-dashed border-blue-200 rounded-3xl p-6 hover:bg-blue-50 hover:border-blue-300 transition-all duration-300 text-left flex items-center justify-center gap-4 cursor-pointer"
+        >
+          <div className="w-12 h-12 bg-blue-100 text-blue-600 flex items-center justify-center rounded-full group-hover:scale-110 transition-transform duration-300">
+            <Plus size={24} />
+          </div>
+          <span className="text-lg font-bold text-blue-600">Create Custom Pack</span>
+        </div>
+
         {packs.map((pack) => (
           <div
             key={pack.id}
-            onClick={() => onSelectPack(pack.id)}
-            role="button"
-            tabIndex={0}
-            className="group relative bg-white rounded-3xl p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:border-blue-100 hover:-translate-y-1 transition-all duration-300 text-left flex items-center gap-6 cursor-pointer"
+            className="group relative bg-white rounded-3xl p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:border-blue-100 hover:-translate-y-1 transition-all duration-300 flex items-center gap-6"
           >
             {/* Icon Container */}
-            <div className="w-16 h-16 bg-blue-50 text-3xl flex items-center justify-center rounded-2xl group-hover:scale-110 transition-transform duration-300 shadow-inner">
+            <div 
+              onClick={() => onSelectPack(pack.id)}
+              className="w-16 h-16 bg-blue-50 text-3xl flex items-center justify-center rounded-2xl group-hover:scale-110 transition-transform duration-300 shadow-inner cursor-pointer"
+            >
               {getIconForPack(pack)}
             </div>
             
             {/* Text */}
-            <div className="flex-1">
-              <h3 className="text-xl font-bold text-gray-800 group-hover:text-blue-600 transition-colors">
+            <div className="flex-1 cursor-pointer" onClick={() => onSelectPack(pack.id)}>
+              <h3 className="text-xl font-bold text-gray-800 group-hover:text-blue-600 transition-colors flex items-center gap-2">
                 {pack.name}
+                {pack.type === 'memory' ? <Brain size={16} className="text-purple-500" /> : <Music size={16} className="text-blue-500" />}
               </h3>
               <p className="text-sm text-gray-400 font-medium mt-1 group-hover:text-blue-500">
-                Tap to start
+                {pack.type === 'full' ? '16 Sounds' : '8 Pairs (Memory)'} • {pack.isCustom ? 'Custom' : 'Default'}
               </p>
             </div>
 
-            {/* Arrow Icon */}
-            <div className="text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                <path fillRule="evenodd" d="M16.72 7.72a.75.75 0 011.06 0l3.75 3.75a.75.75 0 010 1.06l-3.75 3.75a.75.75 0 11-1.06-1.06l2.47-2.47H3a.75.75 0 010-1.5h16.19l-2.47-2.47a.75.75 0 010-1.06z" clipRule="evenodd" />
-              </svg>
+            {/* Actions */}
+            <div className="flex items-center gap-2">
+              {pack.isCustom && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onDeletePack(pack.id); }}
+                  className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                  title="Delete Pack"
+                >
+                  <Trash2 size={20} />
+                </button>
+              )}
             </div>
           </div>
         ))}

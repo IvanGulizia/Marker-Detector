@@ -11,6 +11,8 @@
   "dependencies": {
     "js-aruco": "^0.1.0",
     "js-aruco2": "^2.0.0",
+    "localforage": "^1.10.0",
+    "lucide-react": "^1.7.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
