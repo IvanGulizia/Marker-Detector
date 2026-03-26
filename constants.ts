@@ -5,18 +5,6 @@ export const VALID_MARKER_IDS = [
   63, 72, 108, 140, 164, 175, 194, 236
 ];
 
-// Memory pairs mapping (8 pairs of 2 markers)
-export const MEMORY_PAIRS: [number, number][] = [
-  [13, 30],
-  [41, 42],
-  [43, 49],
-  [50, 54],
-  [63, 72],
-  [108, 140],
-  [164, 175],
-  [194, 236]
-];
-
 export const DEFAULT_PACK_ID = 'default';
 
 // How often to scan for markers (ms)
@@ -33,13 +21,13 @@ export const FALLBACK_PACKS: SoundPack[] = [
     name: 'Synth Default', 
     type: 'full',
     icon: '🎹',
-    sounds: {} // Empty means it will fallback to synth tones
+    sounds: [] // Empty means it will fallback to synth tones
   },
   { 
     id: 'animals', 
     name: 'Animals (Memory)', 
     type: 'memory',
     icon: '🦁',
-    sounds: {} // Placeholder for future default assets
+    sounds: [] // Placeholder for future default assets
   }
 ];

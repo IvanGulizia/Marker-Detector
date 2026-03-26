@@ -30,7 +30,10 @@ export const Home: React.FC<HomeProps> = ({ packs, onSelectPack, debugMode, onTo
       <header className="mt-8 mb-8 flex justify-between items-start">
         <div>
           <h1 className="text-3xl font-bold mb-2 text-gray-900">Choose a Pack</h1>
-          <p className="text-gray-500">Select a sound pack to start detecting markers.</p>
+          <p className="text-gray-500 mb-2">Select a sound pack to start detecting markers.</p>
+          <div className="inline-flex items-center gap-2 bg-yellow-50 text-yellow-800 text-xs px-3 py-1.5 rounded-lg border border-yellow-200">
+            <span className="font-bold">📱 iOS Users:</span> Ensure your physical Silent switch is OFF (ring mode) to hear sounds.
+          </div>
         </div>
         <button 
           onClick={onToggleDebug}

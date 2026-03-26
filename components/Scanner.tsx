@@ -2,7 +2,9 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import jsAruco from 'js-aruco2';
 import 'js-aruco2/src/dictionaries/aruco_4x4_1000.js';
 import { audioService } from '../services/audioService';
+import { packManager } from '../services/packManager';
 import { VALID_MARKER_IDS, SOUND_COOLDOWN_MS } from '../constants';
+import { SoundItem } from '../types';
 
 const { AR } = jsAruco;
 
@@ -33,6 +35,8 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
   const [scanInterval, setScanInterval] = useState(100); // 100ms default
   const [persistenceMs, setPersistenceMs] = useState(500); // 500ms tracking memory
   
+  const [markerMap, setMarkerMap] = useState<Record<number, SoundItem>>({});
+  
   const [debugStats, setDebugStats] = useState({ fps: 0, processingTime: 0, resolution: '0x0' });
   
   const requestRef = useRef<number | null>(null);
@@ -57,10 +61,40 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
     setCvReady(true);
   }, []);
 
-  // Preload sounds
-  useEffect(() => {
-    audioService.preloadPack(currentPackId);
+  const generateMapping = useCallback(async () => {
+    const pack = packManager.getPackById(currentPackId);
+    if (!pack) return;
+
+    await audioService.preloadPack(pack);
+
+    if (pack.sounds.length > 0) {
+      const shuffledMarkers = [...VALID_MARKER_IDS].sort(() => Math.random() - 0.5);
+      const newMap: Record<number, SoundItem> = {};
+      
+      if (pack.type === 'full') {
+        // Map up to 16 sounds to 16 markers
+        for(let i = 0; i < Math.min(16, pack.sounds.length); i++) {
+          newMap[shuffledMarkers[i]] = pack.sounds[i];
+        }
+      } else {
+        // Map up to 8 sounds to 16 markers (pairs)
+        for(let i = 0; i < Math.min(8, pack.sounds.length); i++) {
+          newMap[shuffledMarkers[i*2]] = pack.sounds[i];
+          newMap[shuffledMarkers[i*2 + 1]] = pack.sounds[i];
+        }
+      }
+      setMarkerMap(newMap);
+      addLog(`Mapping generated for ${pack.name}`);
+    } else {
+      setMarkerMap({}); // Empty map means fallback to synth
+      addLog(`Using synth fallback for ${pack.name}`);
+    }
   }, [currentPackId]);
+
+  // Preload sounds and generate mapping
+  useEffect(() => {
+    generateMapping();
+  }, [generateMapping]);
 
   // --- 2. CAMERA SETUP ---
   useEffect(() => {
@@ -186,7 +220,14 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
 
     if (now - lastTime > SOUND_COOLDOWN_MS) {
       addLog(`MATCH ID ${id} !!!`);
-      audioService.play(currentPackId, id);
+      
+      const item = markerMap[id];
+      if (item) {
+        audioService.playItem(item);
+      } else {
+        audioService.playSynth(id);
+      }
+      
       lastPlayedTime.current.set(id, now);
     }
   };
@@ -401,6 +442,9 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
         </button>
 
         <div className="flex gap-2 pointer-events-auto">
+           <button onClick={generateMapping} className="w-10 h-10 flex items-center justify-center bg-blue-600/80 backdrop-blur-md rounded-full text-white shadow-lg transition-colors hover:bg-blue-600" title="Shuffle Sounds">
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+           </button>
            {debugMode && (
              <button onClick={handleSimulate} className="px-3 h-10 rounded-full font-bold bg-blue-600/90 text-white backdrop-blur-md text-xs shadow-lg">
                SIM #13
@@ -413,7 +457,7 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
              DEBUG
            </button>
            <button onClick={handleSwitchCamera} className="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md rounded-full text-white shadow-lg">
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
            </button>
         </div>
       </div>
