@@ -19,5 +19,6 @@ declare global {
   interface Window {
     cv: any;
     cvLoaded: boolean;
+    Module: any;
   }
 }

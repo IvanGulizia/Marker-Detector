@@ -39,82 +39,69 @@ export const Scanner: React.FC<ScannerProps> = ({ currentPackId, onBack, initial
 
   // --- 1. ROBUST OPENCV INITIALIZATION ---
   useEffect(() => {
-    if (window.cv && window.cv.aruco && window.cv.getBuildInformation) {
+    // If already loaded and ready
+    if (window.cv && window.cv.aruco) {
       setCvReady(true);
       return;
     }
 
-    let checkTimer: any = null;
-    let attempts = 0;
-
-    const checkAndInit = async () => {
-      attempts++;
-      
-      if (!window.cv) {
-        if (attempts % 20 === 0) setLoadingMsg(`Downloading Engine (${Math.floor(attempts/2)}s)...`);
-        return;
-      }
-
-      try {
-        if (window.cv instanceof Promise) {
-          if (!initAttempted.current) {
-            initAttempted.current = true;
-            addLog("Awaiting cv Promise...");
-            setLoadingMsg("Loading Vision Engine...");
-            try {
-              const cvInstance = await window.cv;
-              window.cv = cvInstance;
-              addLog("Promise resolved.");
-            } catch (e: any) {
-              addLog("Promise Error: " + e.message);
-              initAttempted.current = false;
-            }
-          }
-        } else if (typeof window.cv === 'function' && !window.cv.getBuildInformation && !initAttempted.current) {
-          initAttempted.current = true;
-          addLog("Starting WASM Compilation...");
-          setLoadingMsg("Compiling WASM...");
-          
-          try {
-            const cvInstance = await window.cv();
-            window.cv = cvInstance; 
-            addLog("WASM Compiled.");
-          } catch (e: any) {
-            addLog("WASM Error: " + e.message);
-            initAttempted.current = false;
-          }
+    // Prepare the Module object for OpenCV WASM initialization callback
+    window.Module = {
+      onRuntimeInitialized: () => {
+        addLog("WASM Runtime Initialized");
+        if (window.cv && window.cv.aruco) {
+          addLog("ArUco Module Verified");
+          setCvReady(true);
+        } else {
+          setLoadingMsg("Error: ArUco missing in OpenCV build");
         }
-        
-        if (window.cvLoaded && window.cv && window.cv.getBuildInformation) {
-          if (window.cv.aruco) {
-             addLog("ArUco Module Verified.");
-             setCvReady(true);
-             if(checkTimer) clearInterval(checkTimer);
-          } else {
-             addLog("WARNING: cv loaded but ArUco missing.");
-             setLoadingMsg("Error: ArUco module missing.");
-             if(checkTimer) clearInterval(checkTimer);
-          }
-        } else if (window.cv && window.cv.getBuildInformation) {
-          // Fallback if cvLoaded wasn't set but it's ready
-          if (window.cv.aruco) {
-             addLog("ArUco Module Verified.");
-             setCvReady(true);
-             if(checkTimer) clearInterval(checkTimer);
-          }
-        }
-      } catch(e: any) {
-        addLog("Init Error: " + e.message);
-      }
-
-      if (attempts > 120) {
-        setLoadingMsg("Connection Timeout (Vision).");
-        if(checkTimer) clearInterval(checkTimer);
       }
     };
 
-    checkTimer = setInterval(checkAndInit, 500);
-    return () => clearInterval(checkTimer);
+    const scriptId = 'opencv-script';
+    if (!document.getElementById(scriptId)) {
+      addLog("Injecting OpenCV script...");
+      setLoadingMsg("Downloading Vision Engine (~8MB)...");
+      
+      const script = document.createElement('script');
+      script.id = scriptId;
+      // Using official OpenCV 4.8.0 which includes ArUco
+      script.src = 'https://docs.opencv.org/4.8.0/opencv.js';
+      script.async = true;
+      
+      script.onload = () => {
+        addLog("Script downloaded.");
+        // Sometimes onRuntimeInitialized fires before onload, sometimes after
+        if (window.cv && window.cv.aruco) {
+          setCvReady(true);
+        }
+      };
+      
+      script.onerror = () => {
+        addLog("Failed to load OpenCV script.");
+        setLoadingMsg("Network Error: Failed to load OpenCV.");
+      };
+      
+      document.body.appendChild(script);
+    }
+
+    // Fallback polling just in case callbacks are missed
+    const fallbackTimer = setInterval(() => {
+      if (window.cv && window.cv.aruco) {
+        setCvReady(true);
+        clearInterval(fallbackTimer);
+      } else if (window.cv instanceof Promise) {
+        window.cv.then((target: any) => {
+          window.cv = target;
+          if (window.cv.aruco) {
+            setCvReady(true);
+            clearInterval(fallbackTimer);
+          }
+        }).catch(() => {});
+      }
+    }, 1000);
+
+    return () => clearInterval(fallbackTimer);
   }, []);
 
   // Preload sounds
